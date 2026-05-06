@@ -1,1 +1,0 @@
-This folder contains files for data extraction from various documents
