@@ -940,7 +940,7 @@ async def extract_bulk_invoice(
         },
     )
 
-    print(json.dumps({"status": "success", "document_type": "bulkinvoice", "data": final_results}, indent=2))
+    # print(json.dumps({"status": "success", "document_type": "bulkinvoice", "data": final_results}, indent=2))
 
     return {
         "status": "success",
