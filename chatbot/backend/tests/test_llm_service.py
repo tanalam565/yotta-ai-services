@@ -90,7 +90,7 @@ def test_extract_citations_expands_grouped_citation_blocks():
 
 def test_call_openai_sync_falls_back_to_max_completion_tokens():
     service = LLMService.__new__(LLMService)
-    service.model = "chatbot-gpt-5.4"
+    service.model = "gpt-5-chat"
 
     class _Message:
         def __init__(self, content):
