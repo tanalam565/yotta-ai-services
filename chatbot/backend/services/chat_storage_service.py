@@ -24,10 +24,14 @@ class PersistenceService:
     """Persist chat and upload records in PostgreSQL or SQLite."""
 
     def __init__(self):
+        self.enabled = config.PERSISTENCE_ENABLED
         self.database_url = config.DATABASE_URL.strip()
         self.use_postgres = bool(self.database_url)
         self.db_path = config.PERSISTENCE_DB_PATH
         self.logger = logging.getLogger(__name__)
+        if not self.enabled:
+            self.logger.info("Persistence disabled (Redis-only runtime mode)")
+            return
         if not self.use_postgres:
             os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
             self.logger.info("Persistence backend: SQLite (%s)", self.db_path)
@@ -246,6 +250,8 @@ class PersistenceService:
 
     async def initialize(self):
         """Initialize persistence tables for configured backend."""
+        if not self.enabled:
+            return
         await asyncio.to_thread(self._initialize_sync)
         if self.use_postgres:
             self.logger.info("Persistence initialized in PostgreSQL")
@@ -284,6 +290,8 @@ class PersistenceService:
 
     async def ensure_session(self, session_id: str):
         """Create or touch session row."""
+        if not self.enabled:
+            return
         await asyncio.to_thread(self._upsert_session_sync, session_id)
 
     def _save_upload_sync(
@@ -438,6 +446,8 @@ class PersistenceService:
     ) -> str:
         """Persist upload metadata and extracted page text."""
         upload_id = str(uuid.uuid4())
+        if not self.enabled:
+            return upload_id
         await self.ensure_session(session_id)
 
         await asyncio.to_thread(
@@ -580,6 +590,8 @@ class PersistenceService:
         sources: List[Dict],
     ):
         """Persist user+assistant messages and assistant source references."""
+        if not self.enabled:
+            return
         await self.ensure_session(session_id)
         await asyncio.to_thread(
             self._save_chat_exchange_sync,
@@ -609,4 +621,6 @@ class PersistenceService:
 
     async def delete_session(self, session_id: str):
         """Delete persisted records for a session."""
+        if not self.enabled:
+            return
         await asyncio.to_thread(self._delete_session_sync, session_id)

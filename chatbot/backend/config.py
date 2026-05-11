@@ -86,6 +86,12 @@ RATE_LIMIT_UPLOAD = os.getenv("RATE_LIMIT_UPLOAD", "5/minute")
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "90"))
 
 # Durable storage (source of truth)
+PERSISTENCE_ENABLED = os.getenv("PERSISTENCE_ENABLED", "true").strip().lower() in {
+	"1",
+	"true",
+	"yes",
+	"on",
+}
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 PERSISTENCE_DB_PATH = os.getenv(
 	"PERSISTENCE_DB_PATH",
