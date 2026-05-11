@@ -27,6 +27,7 @@ AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=
 AZURE_DOCUMENT_INTELLIGENCE_KEY=
 
 # Durable source-of-truth storage (chat + uploads metadata/pages)
+PERSISTENCE_ENABLED=true
 DATABASE_URL=postgresql://user:password@host:5432/yottareal
 PERSISTENCE_DB_PATH=backend/data/chat_logs.db
 
