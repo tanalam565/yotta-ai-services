@@ -1,0 +1,52 @@
+# ── Web framework ──────────────────────────────────────────────
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+starlette==0.38.6
+python-multipart==0.0.12
+
+# ── Data validation ────────────────────────────────────────────
+pydantic==2.5.3
+
+# ── Azure Document Intelligence ────────────────────────────────
+# id_document.py uses the older azure-ai-formrecognizer SDK (prebuilt-idDocument)
+azure-ai-formrecognizer==3.3.3
+# All other extractors and the chatbot use the newer SDK
+azure-ai-documentintelligence==1.0.2
+azure-core==1.32.0
+
+# ── Azure AI Search ────────────────────────────────────────────
+azure-search-documents==11.4.0
+
+# ── Azure Blob Storage ─────────────────────────────────────────
+azure-storage-blob==12.19.0
+
+# ── Azure OpenAI ───────────────────────────────────────────────
+openai==1.59.3
+
+# ── HTTP client ────────────────────────────────────────────────
+httpx[http2]==0.27.2
+
+# ── Redis (chatbot session & rate limiting) ────────────────────
+redis==5.0.1
+
+# ── Retry logic ────────────────────────────────────────────────
+tenacity==8.2.3
+
+# ── Rate limiting middleware ───────────────────────────────────
+slowapi==0.1.9
+
+# ── Environment variables ──────────────────────────────────────
+python-dotenv==1.0.1
+
+# ── Async support ──────────────────────────────────────────────
+anyio==4.7.0
+
+# ── Production server ──────────────────────────────────────────
+gunicorn==23.0.0
+
+# ── Durable persistence (chatbot chat logs) ────────────────────
+psycopg[binary]==3.2.6
+
+# ── Testing ────────────────────────────────────────────────────
+pytest==8.3.4
+pytest-asyncio==0.25.3
