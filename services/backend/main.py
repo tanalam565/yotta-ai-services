@@ -3,6 +3,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Header, Depends, S
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from fastapi.security import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from datetime import datetime
@@ -30,8 +31,15 @@ from chatbot_services.llm_service import LLMService
 from chatbot_services.document_intelligence_service import DocumentIntelligenceService
 from chatbot_services.redis_service import get_redis_client, close_redis
 from chatbot_services.blob_service import BlobService
-from chatbot_services.chat_storage_service import PersistenceService
 import chatbot_config
+
+class PersistenceService:
+    """No-op stub — chat history persistence is disabled."""
+    async def initialize(self): pass
+    async def save_chat_exchange(self, **kwargs): pass
+    async def ensure_session(self, session_id: str): pass
+    async def save_upload(self, **kwargs) -> str: return str(uuid.uuid4())
+    async def delete_session(self, session_id: str): pass
 
 from pathlib import Path
 from dotenv import load_dotenv
@@ -1177,14 +1185,30 @@ async def extract_vendor(
 
 # ==================== FRONTEND ROUTES ====================
 
-CHATBOT_FRONTEND_URL = os.getenv("CHATBOT_FRONTEND_URL", "http://localhost:3000")
+# Resolve the React build directory (services/frontend/build/)
+_FRONTEND_BUILD = Path(__file__).resolve().parent.parent / "frontend" / "build"
+
+# Mount React static assets at /chatbot/static (matches homepage: "/chatbot")
+if _FRONTEND_BUILD.exists():
+    app.mount("/chatbot/static", StaticFiles(directory=str(_FRONTEND_BUILD / "static")), name="chatbot_static")
 
 @app.get("/chat", tags=["Frontend"], summary="Open the YottaReal chatbot UI")
 async def chat_frontend():
-    """Redirect to the YottaReal chatbot React frontend."""
+    """Redirect to the chatbot UI served at /chatbot/."""
     if not ENABLE_FRONTEND:
         raise HTTPException(status_code=404, detail="Frontend is disabled")
-    return RedirectResponse(url=CHATBOT_FRONTEND_URL)
+    return RedirectResponse(url="/chatbot/")
+
+@app.get("/chatbot", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/chatbot/{path:path}", response_class=HTMLResponse, include_in_schema=False)
+async def chatbot_spa(path: str = ""):
+    """Serve the React SPA index.html for all /chatbot/* routes."""
+    if not ENABLE_FRONTEND:
+        raise HTTPException(status_code=404, detail="Frontend is disabled")
+    index = _FRONTEND_BUILD / "index.html"
+    if not index.exists():
+        return HTMLResponse("<h1>Chatbot not built</h1><p>Run <code>npm run build</code> in services/frontend/</p>", status_code=404)
+    return HTMLResponse(index.read_text())
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():
