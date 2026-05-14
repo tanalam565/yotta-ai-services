@@ -468,7 +468,7 @@ Answer (use bullet points on separate lines with [N → Page X] citations):"""
             "messages": messages,
             "temperature": 0.3,
             "timeout": config.REQUEST_TIMEOUT_SECONDS,
-            "max_completion_tokens": 2000,
+            "max_completion_tokens": 500,
         }
 
         response = self.client.chat.completions.create(**request_kwargs)
@@ -497,13 +497,28 @@ Answer (use bullet points on separate lines with [N → Page X] citations):"""
         """
         messages = [{"role": "system", "content": system_prompt}]
 
-        for msg in history:
+        # Cap each history response to 600 chars and total history to 3,000 chars
+        # to keep prompt size stable as conversations grow.
+        MAX_RESPONSE_CHARS = 600
+        MAX_HISTORY_CHARS = 3000
+        total_history_chars = 0
+        trimmed_history = []
+        for msg in reversed(history):
+            response_text = msg["response"][:MAX_RESPONSE_CHARS]
+            entry_chars = len(msg["query"]) + len(response_text)
+            if total_history_chars + entry_chars > MAX_HISTORY_CHARS:
+                break
+            trimmed_history.insert(0, {"query": msg["query"], "response": response_text})
+            total_history_chars += entry_chars
+
+        for msg in trimmed_history:
             messages.append({"role": "user", "content": msg["query"]})
             messages.append({"role": "assistant", "content": msg["response"]})
 
         messages.append({"role": "user", "content": user_prompt})
 
-        self.logger.info("Including %s previous exchanges in context", len(history))
+        self.logger.info("Including %s previous exchanges in context (budget: %s/%s chars)",
+                         len(trimmed_history), total_history_chars, MAX_HISTORY_CHARS)
 
         return await asyncio.to_thread(self._call_openai_sync, messages)
 
@@ -515,7 +530,8 @@ Answer (use bullet points on separate lines with [N → Page X] citations):"""
         context: List[Dict],
         session_id: Optional[str] = None,
         has_uploads: bool = False,
-        is_comparison: bool = False
+        is_comparison: bool = False,
+        prefetched_history: Optional[list] = None,
     ) -> Dict:
         """
         Generate a citation-aware answer for a user query.
@@ -546,7 +562,8 @@ Answer (use bullet points on separate lines with [N → Page X] citations):"""
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        history = await self._load_history(session_id)
+        # Use caller-supplied history to avoid an extra Redis round trip.
+        history = prefetched_history if prefetched_history is not None else await self._load_history(session_id)
 
         system_prompt = self._build_system_prompt(has_uploads)
         user_prompt, doc_mapping = self._build_prompt(query, context, has_uploads)
