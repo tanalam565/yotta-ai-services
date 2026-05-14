@@ -176,7 +176,8 @@ Guidelines:
 - Provide detailed explanations with context
 - For ambiguous queries, ask clarifying questions
 - Always ground your answers in the provided documents
-- ALWAYS include [N → Page X] citations when referencing specific information
+- ALWAYS include [N → Page X] citations when referencing specific information from a document
+- NEVER add citations to conversational responses (greetings, farewells, clarifying questions, or any reply where you are not directly quoting or summarizing document content)
 - Make responses thorough and informative"""
 
         if has_uploads:
@@ -468,7 +469,7 @@ Answer (use bullet points on separate lines with [N → Page X] citations):"""
             "messages": messages,
             "temperature": 0.3,
             "timeout": config.REQUEST_TIMEOUT_SECONDS,
-            "max_completion_tokens": 500,
+            "max_completion_tokens": 800,
         }
 
         response = self.client.chat.completions.create(**request_kwargs)
