@@ -33,6 +33,9 @@ from chatbot_services.redis_service import get_redis_client, close_redis
 from chatbot_services.blob_service import BlobService
 import chatbot_config
 
+# Import money order validator service
+from money_order_validator import process_file as validate_checks_file
+
 class PersistenceService:
     """No-op stub — chat history persistence is disabled."""
     async def initialize(self): pass
@@ -170,6 +173,7 @@ API_KEY_ID          = os.getenv("API_KEY_ID", "")
 API_KEY_INSURANCE   = os.getenv("API_KEY_INSURANCE", "")
 API_KEY_BULKINVOICE = os.getenv("API_KEY_BULKINVOICE", "")
 API_KEY_VENDOR      = os.getenv("API_KEY_VENDOR", "")
+API_KEY_CHECKVALIDATION = os.getenv("API_KEY_CHECKVALIDATION", "")
 API_KEY_MASTER      = os.getenv("API_KEY_MASTER", "")  # Master key for all services
 ENABLE_FRONTEND     = os.getenv("ENABLE_FRONTEND", "true").lower() == "true"
 
@@ -315,6 +319,19 @@ async def verify_api_key_vendor(x_api_key: Optional[str] = Header(None)):
     if x_api_key != API_KEY_VENDOR and x_api_key != API_KEY_MASTER:
         raise HTTPException(status_code=401, detail="Invalid API key for vendor extraction")
     
+    return True
+
+async def verify_api_key_checkvalidation(x_api_key: Optional[str] = Header(None)):
+    """Verify API key for check validation"""
+    if not API_KEY_CHECKVALIDATION and not API_KEY_MASTER:
+        return True
+
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key missing. Include 'X-API-Key' header.")
+
+    if x_api_key != API_KEY_CHECKVALIDATION and x_api_key != API_KEY_MASTER:
+        raise HTTPException(status_code=401, detail="Invalid API key for check validation")
+
     return True
 
 # ==================== HELPER FUNCTIONS ====================
@@ -1175,6 +1192,37 @@ async def extract_vendor(
             "processing_time_seconds": round(total_time, 2),
         }
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        total_time = (datetime.now() - start_time).total_seconds()
+        error_msg = str(e) if str(e) else "Unknown error occurred"
+        error_trace = traceback.format_exc()
+        raise HTTPException(status_code=500, detail={"error": error_msg, "file": file.filename, "traceback": error_trace[:500]})
+
+@app.post("/validate/checks")
+async def validate_checks(
+    file: UploadFile = File(...),
+    authenticated: bool = Depends(verify_api_key_checkvalidation),
+):
+    start_time = datetime.now()
+    try:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        try:
+            result = await validate_checks_file(file.filename, content)
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
+        total_time = (datetime.now() - start_time).total_seconds()
+        return {
+            "status": "success",
+            "document_type": "checkvalidation",
+            "data": result.model_dump(mode="json", exclude_none=True),
+            "processing_time_seconds": round(total_time, 2),
+        }
     except HTTPException:
         raise
     except Exception as e:

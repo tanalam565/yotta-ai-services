@@ -1,0 +1,311 @@
+LLM_SYSTEM_MSG = (
+    "You are a precise bank document extraction engine. Return only valid JSON. "
+    "Use null for unreadable fields. Never guess digits."
+)
+
+INSTRUMENT_EXTRACTION_PROMPT = """
+Extract all visible FRONT-SIDE payment instruments from the image.
+The image can be rotated, sideways, cropped, or can contain multiple instruments on one page.
+
+Return JSON only:
+{
+  "instruments": [
+    {
+      "instrument_type": "MoneyOrder|Check|CashiersCheck|Escrow",
+      "payment_description": "Payment-MoneyOrder|Payment-Check|Escrow Deposit Paid In",
+      "issuer": "Western Union|MoneyGram|PLS|DolEx|Intermex|Fidelity Express|JPMorgan Chase|Wells Fargo|Comerica Bank|null",
+      "issuer_agent": string|null,
+      "serial_number": string|null,
+      "issue_date": "YYYY-MM-DD"|null,
+      "amount_numeric": number|null,
+      "amount_words": string|null,
+      "payee_raw": string|null,
+      "unit": string|null,
+      "payer_name": string|null,
+      "payer_address": string|null,
+      "payer_signature": boolean,
+      "payment_for_acct": string|null,
+      "micr_line": string|null,
+      "amount_evidence": "numeric_box|amount_words|both|unclear",
+      "serial_evidence": "labeled_number|check_number_micr|both|unclear",
+      "mobile_deposit_prohibited": boolean,
+      "watermark_present": boolean
+    }
+  ]
+}
+
+Skip and do not include:
+- Back pages: service charge text, load-this-direction arrows, endorsement panels, "for deposit only" stamps,
+  purchaser agreement text, security-feature/legal disclosure pages.
+- Deposit tickets/forms, deposit slips, deposit receipts, Chase ATM receipts, batch/register pages, blank pages.
+- Pre-printed deposit-ticket forms at the top of a mixed page are NOT checks; do not create an instrument for them even if they have a MICR line or total box.
+- Regions "Details of Deposits by Account" pages with Capture Seq/R/T/Post Amount/Credit Amount tables.
+- Bleed-through text from the other side of a money order.
+
+Important extraction rules:
+- Extract only fields physically visible on the page image.
+- A page can contain one, two, three, or more instruments. Return one object per front-side instrument.
+- Amount must come from a labeled amount box or written amount words. MICR/routing/account numbers are never amounts.
+- Preserve cents exactly. If the amount box visually shows separated cents like "$356 56", return 356.56, not 356.00.
+- If written amount words clearly disagree with numeric amount, trust the written amount words.
+- Set amount_evidence="both" only when the numeric box and legal amount words independently agree.
+- If only one amount source is readable, identify that source. If neither is clear, return amount_numeric=null.
+- Serial/document numbers may begin with any digits, including 20. Read the complete visibly labeled number; never infer a prefix from issuer examples.
+- MoneyGram serial is usually top-right/check-number area. Do not confuse vertical form numbers with the serial.
+- For cashier/personal checks, serial_number is the check number, usually top-right and/or final MICR group.
+- For checks, routing and account numbers are never serial_number.
+- payee_raw is the property/community name only. If the payee line also has an apartment/unit number, put that number in unit.
+- unit is an apartment/unit identifier, usually 3-5 digits, from payee line, purchaser address, memo, payment-for/account field, or handwritten notes.
+- payer_name is the purchaser/remitter/drawer name, not labels like "purchaser", "remitter", or "address".
+- Return null instead of hallucinating unreadable names or digits.
+
+Compressed OCR context from Azure Document Intelligence, if available:
+{ocr_context}
+""".strip()
+
+INSTRUMENT_RECOVERY_PROMPT = """
+Inspect this high-resolution crop for FRONT-SIDE payment instruments that may have
+been missed during the first pass.
+
+Return JSON only:
+{"instruments": [{"instrument_type": "MoneyOrder|Check|CashiersCheck|Escrow",
+"serial_number": string|null, "micr_line": string|null,
+"amount_numeric": number|null, "amount_words": string|null,
+"payee_raw": string|null, "issue_date": "YYYY-MM-DD"|null,
+"issuer": string|null, "unit": string|null}]}
+
+Strict rules:
+- Return an object only for a clearly visible front-side instrument.
+- Do not return deposit slips, receipts, registers, backs, partial neighboring
+  instruments, or bleed-through.
+- Never infer or complete hidden digits. Use null for every unreadable field.
+- amount_numeric must be visibly supported by an amount box or amount words.
+- serial_number must be visibly supported by a labeled document/check/serial
+  number or the check-number portion of the MICR line.
+- If the crop contains only a fragment and cannot establish an amount plus a
+  separate identity field, return {"instruments": []}.
+- Multiple instruments may be returned only when each is independently clear.
+""".strip()
+
+BATCH_HEADER_PROMPT = """
+Extract batch/header fields from this property-management batch/deposit page.
+Return JSON only with keys:
+{
+  "property_name": string|null,
+  "property_address": string|null,
+  "batch_number": string|null,
+  "batch_type": string|null,
+  "batch_status": string|null,
+  "pay_period": string|null,
+  "bank_name": string|null,
+  "account_number": string|null,
+  "total_items": integer|null,
+  "batch_amount": number|null,
+  "printed_on": "YYYY-MM-DD"|null,
+  "deposit_transaction": string|null
+}
+Rules:
+- Batch number must come from a visible Batch # label when present.
+- Do not use money-order serials, transaction IDs, routing numbers, or account numbers as batch_number.
+- Account number is the deposit/bank account, not the 9-digit routing number.
+- Normalize JPMorgan/CHASE to JPMorgan Chase Bank when clear.
+
+OCR context:
+{ocr_context}
+""".strip()
+
+DEPOSIT_SLIP_PROMPT = """
+Extract deposit slip or deposit report information from this page.
+Return JSON only:
+{
+  "bank_name": string|null,
+  "deposit_account": string|null,
+  "deposit_transaction": string|null,
+  "deposit_date": "YYYY-MM-DD"|null,
+  "deposit_amount": number|null,
+  "check_total": number|null,
+  "cash_back": number|null,
+  "item_count": integer|null,
+  "credit_total": number|null,
+  "debit_total": number|null,
+  "difference": number|null
+}
+Do not extract individual money orders here. For Chase ATM/teller receipts, extract the Checking Deposit/Commercial Deposit total and Business Date.
+OCR context:
+{ocr_context}
+""".strip()
+
+DEPOSIT_TICKET_ITEMS_PROMPT = """
+Extract handwritten line items from a bank deposit ticket/slip page.
+Return JSON only:
+{
+  "items": [
+    {
+      "item_no": integer|null,
+      "unit": string|null,
+      "amount_numeric": number|null
+    }
+  ]
+}
+Rules:
+- Use the numbered rows in the deposit ticket table only.
+- The row amount is split across DOLLARS and CENTS columns. Combine them exactly.
+  Example: DOLLARS=610 and CENTS=50 -> amount_numeric=610.50.
+- If the total or page is upside down, rotate mentally and read the rows upright.
+- Do not extract the preprinted MICR/account number as an item.
+- Do not extract the deposit total as an item.
+- Stop at the last filled row. Empty rows must not be returned.
+- Return [] if no row-level item amounts are visible.
+
+OCR context:
+{ocr_context}
+""".strip()
+
+
+DEPOSIT_DETAIL_REPORT_ITEMS_PROMPT = """
+Extract the authoritative transaction rows from this Deposit Detail Report page.
+
+Return JSON only:
+{
+  "items": [
+    {
+      "item_no": integer|null,
+      "aux_serial": string|null,
+      "routing_number": string|null,
+      "account_number": string|null,
+      "check_number": string|null,
+      "amount_numeric": number|null,
+      "item_type": string|null,
+      "is_deposit_total": boolean
+    }
+  ]
+}
+
+Rules:
+- Read the printed black-header table rows, not the thumbnail image text.
+- Table headers usually include AUX/Serial, RIC, RT, WAUX/FLD4, Account, Check, Amount, Item Type, Item Status.
+- The first ELECTRONIC/Credit row is the aggregate deposit total. Mark it is_deposit_total=true.
+- Do NOT return the aggregate credit row as a physical payment item. It can be included only if is_deposit_total=true.
+- All later rows with Item Type like 0003 or Debit are physical deposited payment items.
+- Use the printed row amount above each thumbnail as amount_numeric. Do not use handwritten amount in the thumbnail when the row amount is visible.
+- Preserve cents exactly. $294.36 must remain 294.36, not 294.56.
+- If AUX/Serial is blank, derive serial_number later from account_number; leave aux_serial null.
+- Return each visible printed row once. Do not duplicate rows from thumbnail front/back images.
+
+OCR context:
+{ocr_context}
+""".strip()
+
+
+DEPOSIT_DETAIL_REPORT_ROW_CROP_PROMPT = """
+Extract the single authoritative printed transaction row from this Deposit Detail Report row crop.
+
+Return JSON only:
+{
+  "item": {
+    "aux_serial": string|null,
+    "routing_number": string|null,
+    "account_number": string|null,
+    "check_number": string|null,
+    "amount_numeric": number|null,
+    "item_type": string|null,
+    "is_deposit_total": boolean
+  }
+}
+
+Rules:
+- Read only the printed row immediately under the black table header.
+- Do not read handwritten text inside the thumbnail image.
+- The row columns are usually AUX/Serial, RIC, RT, WAUX/FLD4, Account, Check, Amount, Item Type, Item Status.
+- If the row is the aggregate ELECTRONIC/Credit deposit row, set is_deposit_total=true.
+- If the row is a physical payment item, set is_deposit_total=false.
+- Preserve cents exactly. For example 294.36 is 294.36, not 294.56.
+- If AUX/Serial is blank, leave aux_serial null and keep routing_number/account_number/amount_numeric.
+
+OCR context:
+{ocr_context}
+""".strip()
+
+
+
+
+AMOUNT_VERIFICATION_PROMPT = """
+Re-read ONLY the payment amount from this single FRONT-SIDE instrument image.
+
+Return JSON only:
+{
+  "amount_numeric": number|null,
+  "amount_words": string|null,
+  "confidence": number,
+  "evidence_source": "amount_words|numeric_box|both|unclear",
+  "notes": string|null
+}
+
+Rules:
+- Focus on the instrument face only: the numeric amount box and written/legal amount line.
+- Do not use deposit-ticket rows, register rows, MICR digits, account numbers, serial numbers, unit numbers, or batch totals as the amount.
+- If written amount words are legible, parse them exactly and use them for amount_numeric.
+- Read multiline legal amounts as one phrase. For example, "THREE HUNDRED" on one line
+  followed by "EIGHTY-FIVE DOLLARS 00 CENTS" is exactly 385.00.
+- If numeric box and written amount disagree, prefer written amount only when it is clearly legible; otherwise set confidence below 0.70.
+- Preserve cents exactly. Examples: "NINE HUNDRED DOLLARS 00 CENTS" -> 900.00; "ONE HUNDRED DOLLARS 00 CENTS" -> 100.00.
+- If the amount is unclear, return amount_numeric=null and confidence below 0.60.
+
+Current extracted candidate, for comparison only; do not trust it if the image disagrees:
+{candidate_context}
+
+Compressed OCR context from Azure Document Intelligence, if available:
+{ocr_context}
+""".strip()
+
+IDENTITY_VERIFICATION_PROMPT = """
+Re-read ONLY the document/check number from this single isolated FRONT-SIDE
+payment instrument image.
+
+Return JSON only:
+{"document_number": string|null, "confidence": number, "notes": string|null}
+
+Rules:
+- Read the visibly printed check/document number, normally near the top-right.
+- Routing and account numbers are never document_number.
+- For cashier checks, do not replace the visible document number with an
+  unrelated MICR group.
+- Never infer hidden digits. Return null when unclear.
+
+Current conflicting candidate, for comparison only:
+{candidate_context}
+
+Crop-local OCR context:
+{ocr_context}
+""".strip()
+
+
+REGISTER_ITEMS_PROMPT = """
+Extract the item/register rows from this bank deposit report or property-management batch table.
+Return JSON only:
+{
+  "items": [
+    {
+      "item_no": integer|null,
+      "routing_number": string|null,
+      "account_number": string|null,
+      "check_number": string|null,
+      "serial_number": string|null,
+      "instrument_type": "Check|MoneyOrder|null",
+      "payment_description": "Payment-Check|Payment-MoneyOrder|null",
+      "amount_numeric": number|null
+    }
+  ]
+}
+Rules:
+- Extract only real table rows, not header totals.
+- For Regions reports, rows are under columns like Capture Seq., R/T, Account Number, Check Number, Post Amount, Credit Amount.
+- Use Post Amount as amount_numeric.
+- For personal/business checks, serial_number is the check number.
+- For money orders, serial_number is the long check/MO number when shown.
+- Do not duplicate rows from continued summary pages that do not show item rows.
+- Return [] if no individual item rows are visible.
+
+OCR context:
+{ocr_context}
+""".strip()
