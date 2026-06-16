@@ -1607,6 +1607,7 @@ async def health_check():
             "insurance": "available",
             "bulkinvoice": "available",
             "vendor": "available",
+            "checkvalidation": "available",
         },
         "chatbot": "available",
         "redis": "healthy",
