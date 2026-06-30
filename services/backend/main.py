@@ -182,7 +182,7 @@ MAX_FILE_SIZE      = 15 * 1024 * 1024  # 15MB
 BULK_MAX_FILE_SIZE = 5  * 1024 * 1024  # 5MB per file for bulk invoice
 ALLOWED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.heic', '.heif'}
 
-# Semaphore for bulk invoice — limit concurrent GPT calls
+# Semaphore — limit concurrent GPT calls across all extraction endpoints
 _gpt_semaphore = asyncio.Semaphore(3)
 
 app.add_middleware(
@@ -741,7 +741,8 @@ async def extract_invoice(
             )
         
         try:
-            extracted_data = extract_invoice_data(content)
+            async with _gpt_semaphore:
+                extracted_data = await asyncio.to_thread(extract_invoice_data, content)
         except ValueError as ve:
             raise HTTPException(status_code=400, detail=str(ve))
         
@@ -798,7 +799,8 @@ async def extract_poi(
         
         try:
             logger.info("Starting OCR extraction...")
-            extracted_data = extract_employment_data_ocr(content)
+            async with _gpt_semaphore:
+                extracted_data = await asyncio.to_thread(extract_employment_data_ocr, content)
             extraction_time = (datetime.now() - start_time).total_seconds()
             logger.info(f"OCR extraction completed in {extraction_time:.2f}s")
         except ValueError as ve:
@@ -861,7 +863,8 @@ async def extract_id(
             raise HTTPException(status_code=400, detail="Empty file")
         
         try:
-            extracted_data = extract_id_data(content)
+            async with _gpt_semaphore:
+                extracted_data = await asyncio.to_thread(extract_id_data, content)
             
             if isinstance(extracted_data, dict):
                 raw_ids: List[Dict[str, Any]] = [extracted_data]
@@ -943,7 +946,8 @@ async def extract_insurance(
             raise HTTPException(status_code=400, detail="Empty file")
         
         try:
-            extracted_data = extract_insurance_data_ocr(content)
+            async with _gpt_semaphore:
+                extracted_data = await asyncio.to_thread(extract_insurance_data_ocr, content)
         except ValueError as ve:
             raise HTTPException(status_code=400, detail=str(ve))
         
@@ -1154,7 +1158,8 @@ async def extract_vendor(
             )
 
         try:
-            extracted_data = extract_vendor_data_ocr(content)
+            async with _gpt_semaphore:
+                extracted_data = await asyncio.to_thread(extract_vendor_data_ocr, content)
         except ValueError as ve:
             raise HTTPException(status_code=400, detail=str(ve))
 
@@ -1213,7 +1218,8 @@ async def validate_checks(
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
         try:
-            result = await validate_checks_file(file.filename, content)
+            async with _gpt_semaphore:
+                result = await validate_checks_file(file.filename, content)
         except ValueError as ve:
             raise HTTPException(status_code=400, detail=str(ve))
         total_time = (datetime.now() - start_time).total_seconds()
@@ -1592,34 +1598,12 @@ async def run_indexer(authenticated: bool = Depends(verify_chatbot_api_key)):
         raise HTTPException(status_code=500, detail="Internal server error while triggering indexer")
 
 
-# ==================== HEALTH CHECK ====================
+# ==================== HEALTH CHECKS ====================
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    health = {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "services": {
-            "invoice": "available",
-            "poi": "available",
-            "id": "available",
-            "insurance": "available",
-            "bulkinvoice": "available",
-            "vendor": "available",
-            "checkvalidation": "available",
-        },
-        "chatbot": "available",
-        "redis": "healthy",
-    }
-    try:
-        redis_client = await get_redis_client()
-        await redis_client.ping()
-    except Exception as e:
-        logger.warning(f"Health check degraded due to Redis issue: {e}")
-        health["status"] = "degraded"
-        health["redis"] = "unhealthy"
-    return health
+    """Liveness probe """
+    return {"status": "ok"}
 
 # ==================== RUN SERVER ====================
 

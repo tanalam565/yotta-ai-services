@@ -409,7 +409,7 @@ ADDITIONAL RULES
                 {"role": "user", "content": prompt},
             ],
             temperature=0,
-            max_completion_tokens=8000,
+            max_completion_tokens=5000,
             seed=random_seed,
             user=f"extraction_{extraction_id}"
         )

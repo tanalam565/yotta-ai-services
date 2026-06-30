@@ -467,7 +467,7 @@ Answer (use bullet points on separate lines with [N → Page X] citations):"""
         request_kwargs = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.3,
+            # "temperature": 0.3,
             "timeout": config.REQUEST_TIMEOUT_SECONDS,
             "max_completion_tokens": 800,
         }
