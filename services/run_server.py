@@ -1,5 +1,6 @@
 import sys
 import os
+import logging
 from pathlib import Path
 
 # Add backend directory to path
@@ -18,14 +19,16 @@ if __name__ == '__main__':
         or os.environ.get('PORT', 8000)
     )
 
-    print(f"Unified Document Extractor API - Starting on port {port}")
+    from main import app, LOGGING_CONFIG
 
-    from main import app
+    logger = logging.getLogger(__name__)
+    logger.info(f"Unified Document Extractor API - Starting on port {port}")
 
     uvicorn.run(
         app,
         host='127.0.0.1',
         port=port,
         reload=False,
-        workers=1
+        workers=1,
+        log_config=LOGGING_CONFIG
     )

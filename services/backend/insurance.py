@@ -3,7 +3,10 @@ import uuid
 import time
 import random
 import hashlib
+import logging
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.formrecognizer import DocumentAnalysisClient
 from openai import AzureOpenAI
@@ -49,8 +52,8 @@ def extract_insurance_data_ocr(file_content: bytes) -> Dict[str, Any]:
             pages_text.append(page_text)
     
     # Debug logging
-    print(f"Extracted text length: {len(full_text)} characters")
-    print(f"Extracted {len(pages_text)} pages")
+    logger.info(f"Extracted text length: {len(full_text)} characters")
+    logger.info(f"Extracted {len(pages_text)} pages")
     
     # Check if we extracted anything
     if not full_text and not pages_text:
